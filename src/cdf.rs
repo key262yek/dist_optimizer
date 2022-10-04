@@ -1,3 +1,5 @@
+/// Define general CDF and conversion from iterator
+use crate::error::{Error, ErrorCode};
 use std::cmp::Ordering;
 use std::convert::From;
 use std::ops::Bound;
@@ -23,7 +25,7 @@ impl<T: Copy> DistItem<T> {
                     return Ordering::Greater;
                 }
             }
-            Bound::Unbounded => {}
+            Bound::Unbounded => unreachable!(),
         }
 
         match self.end {
@@ -37,7 +39,7 @@ impl<T: Copy> DistItem<T> {
                     return Ordering::Less;
                 }
             }
-            Bound::Unbounded => {}
+            Bound::Unbounded => unreachable!(),
         }
 
         return Ordering::Equal;
@@ -48,15 +50,14 @@ impl<T: Copy> DistItem<T> {
 pub struct CDF<T: Copy>(Vec<DistItem<T>>);
 
 impl<T: Copy> CDF<T> {
-    pub fn get_value(&self, p: f32) -> T {
+    pub fn get_value(&self, p: f32) -> Result<T, Error> {
         if p < 0.0 || 1.0 < p {
-            panic!("p should be in [0, 1], p = {}", p);
+            return Err(Error::make_error_syntax(ErrorCode::InvalidArgumentInput));
         }
 
         let x = self.0.binary_search_by(|v| v.cmp(p));
-        println!("{:?}", x.clone());
         if let Ok(idx) = x {
-            self.0[idx].value
+            Ok(self.0[idx].value)
         } else {
             unreachable!();
         }
@@ -80,6 +81,15 @@ where
                 value: v,
             });
             temp = temp + k / normalize_factor;
+        }
+
+        let last_idx = items.len() - 1;
+        if let DistItem {
+            end: Bound::Excluded(v),
+            ..
+        } = items[last_idx]
+        {
+            items[last_idx].end = Bound::Included(v);
         }
 
         Self(items)
@@ -125,10 +135,25 @@ mod test {
             },
         ]);
 
-        assert_eq!(cdf.get_value(1.0), 3);
-        assert_eq!(cdf.get_value(1.5), 3);
-        assert_eq!(cdf.get_value(2.0), 4);
-        assert_eq!(cdf.get_value(4.0), 5);
-        assert_eq!(cdf.get_value(5.0), 5);
+        assert_eq!(cdf.get_value(1.0), Ok(3));
+        assert_eq!(cdf.get_value(1.5), Ok(3));
+        assert_eq!(cdf.get_value(2.0), Ok(4));
+        assert_eq!(cdf.get_value(4.0), Ok(5));
+        assert_eq!(cdf.get_value(5.0), Ok(5));
+    }
+
+    #[test]
+    fn test_from() {
+        let items = [(1.0, 2), (2.0, 3), (3.0, 4), (4.0, 5)];
+        let cdf: CDF<usize> = items.into();
+
+        assert_eq!(cdf.get_value(0.0), Ok(2));
+        assert_eq!(cdf.get_value(0.1), Ok(3));
+        assert_eq!(cdf.get_value(0.2), Ok(3));
+        assert_eq!(cdf.get_value(0.3), Ok(4));
+        assert_eq!(cdf.get_value(0.5), Ok(4));
+        assert_eq!(cdf.get_value(0.6), Ok(5));
+        assert_eq!(cdf.get_value(0.7), Ok(5));
+        assert_eq!(cdf.get_value(1.0), Ok(5));
     }
 }
