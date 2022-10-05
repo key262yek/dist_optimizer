@@ -1,6 +1,5 @@
-use crate::error::{Error, ErrorCode};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::convert::From;
 /// Define general CDF and conversion from iterator
 use std::hash::Hash;
@@ -76,20 +75,33 @@ impl<T: Copy> CDFItem<T> {
 
         return Ordering::Equal;
     }
+
+    fn len(&self) -> f32 {
+        match (self.start, self.end) {
+            (Bound::Included(s), Bound::Included(e))
+            | (Bound::Included(s), Bound::Excluded(e))
+            | (Bound::Excluded(s), Bound::Included(e))
+            | (Bound::Excluded(s), Bound::Excluded(e)) => e - s,
+            (Bound::Unbounded, Bound::Included(_e)) | (Bound::Unbounded, Bound::Excluded(_e)) => {
+                -f32::INFINITY
+            }
+            (_, Bound::Unbounded) => f32::INFINITY,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct CDF<T: Copy>(Vec<CDFItem<T>>);
 
 impl<T: Copy> CDF<T> {
-    pub fn get_cdf(&self, p: f32) -> Result<T, Error> {
+    pub fn get_cdf(&self, p: f32) -> Option<T> {
         if p < 0.0 || 1.0 < p {
-            return Err(Error::make_error_syntax(ErrorCode::InvalidArgumentInput));
+            return None;
         }
 
         let x = self.0.binary_search_by(|v| v.cmp(p));
         if let Ok(idx) = x {
-            Ok(self.0[idx].value)
+            Some(self.0[idx].value)
         } else {
             unreachable!();
         }
@@ -131,6 +143,7 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use approx::assert_abs_diff_eq;
 
     #[test]
     fn test_get_pdf() {
@@ -184,7 +197,21 @@ mod test {
     }
 
     #[test]
-    fn test_dist_item_order() {
+    fn test_pdf_into_cdf() {
+        let mut map: HashMap<usize, f32> = HashMap::new();
+        map.insert(1, 0.3);
+        map.insert(2, 0.4);
+        map.insert(3, 0.3);
+
+        let pdf = PDF::new(map.clone());
+        let cdf: CDF<usize> = pdf.into();
+        for item in cdf.0.iter() {
+            assert_abs_diff_eq!(item.len(), map[&item.value]);
+        }
+    }
+
+    #[test]
+    fn test_cdf_item_order() {
         let item = CDFItem::<f32> {
             start: Bound::Included(1.0),
             end: Bound::Excluded(2.0),
@@ -196,6 +223,16 @@ mod test {
         assert_eq!(item.cmp(1.5), Ordering::Equal);
         assert_eq!(item.cmp(2.0), Ordering::Less);
         assert_eq!(item.cmp(3.0), Ordering::Less);
+    }
+
+    #[test]
+    fn test_len_cdf_item() {
+        let item = CDFItem::<f32> {
+            start: Bound::Included(1.0),
+            end: Bound::Excluded(2.0),
+            value: 3.0,
+        };
+        assert_abs_diff_eq!(item.len(), 1.0);
     }
 
     #[test]
@@ -218,11 +255,11 @@ mod test {
             },
         ]);
 
-        assert_eq!(cdf.get_cdf(1.0), Ok(3));
-        assert_eq!(cdf.get_cdf(1.5), Ok(3));
-        assert_eq!(cdf.get_cdf(2.0), Ok(4));
-        assert_eq!(cdf.get_cdf(4.0), Ok(5));
-        assert_eq!(cdf.get_cdf(5.0), Ok(5));
+        assert_eq!(cdf.get_cdf(1.0), Some(3));
+        assert_eq!(cdf.get_cdf(1.5), Some(3));
+        assert_eq!(cdf.get_cdf(2.0), Some(4));
+        assert_eq!(cdf.get_cdf(4.0), Some(5));
+        assert_eq!(cdf.get_cdf(5.0), Some(5));
     }
 
     #[test]
@@ -230,13 +267,13 @@ mod test {
         let items = [(2, 1.0), (3, 2.0), (4, 3.0), (5, 4.0)];
         let cdf: CDF<usize> = items.into();
 
-        assert_eq!(cdf.get_cdf(0.0), Ok(2));
-        assert_eq!(cdf.get_cdf(0.1), Ok(3));
-        assert_eq!(cdf.get_cdf(0.2), Ok(3));
-        assert_eq!(cdf.get_cdf(0.3), Ok(4));
-        assert_eq!(cdf.get_cdf(0.5), Ok(4));
-        assert_eq!(cdf.get_cdf(0.6), Ok(5));
-        assert_eq!(cdf.get_cdf(0.7), Ok(5));
-        assert_eq!(cdf.get_cdf(1.0), Ok(5));
+        assert_eq!(cdf.get_cdf(0.0), Some(2));
+        assert_eq!(cdf.get_cdf(0.1), Some(3));
+        assert_eq!(cdf.get_cdf(0.2), Some(3));
+        assert_eq!(cdf.get_cdf(0.3), Some(4));
+        assert_eq!(cdf.get_cdf(0.5), Some(4));
+        assert_eq!(cdf.get_cdf(0.6), Some(5));
+        assert_eq!(cdf.get_cdf(0.7), Some(5));
+        assert_eq!(cdf.get_cdf(1.0), Some(5));
     }
 }
