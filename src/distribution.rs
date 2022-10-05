@@ -1,8 +1,40 @@
-/// Define general CDF and conversion from iterator
 use crate::error::{Error, ErrorCode};
 use std::cmp::Ordering;
+use std::collections::{BTreeMap, HashMap};
 use std::convert::From;
-use std::ops::Bound;
+/// Define general CDF and conversion from iterator
+use std::hash::Hash;
+use std::ops::{Bound, Index};
+
+#[derive(Debug, Clone)]
+pub struct PDF<T: Eq + Hash>(HashMap<T, f32>);
+
+impl<T: Eq + Hash> PDF<T> {
+    pub fn new(map: HashMap<T, f32>) -> Self {
+        Self(map)
+    }
+
+    pub fn get_pdf(&self, k: &T) -> Option<&f32> {
+        self.0.get(k)
+    }
+}
+
+impl<T: Eq + Hash + Copy> Index<T> for PDF<T> {
+    type Output = f32;
+
+    fn index(&self, k: T) -> &f32 {
+        &self.0[&k]
+    }
+}
+
+impl<T: Eq + Hash> IntoIterator for PDF<T> {
+    type Item = (T, f32);
+    type IntoIter = std::collections::hash_map::IntoIter<T, f32>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 struct CDFItem<T: Copy> {
@@ -50,7 +82,7 @@ impl<T: Copy> CDFItem<T> {
 pub struct CDF<T: Copy>(Vec<CDFItem<T>>);
 
 impl<T: Copy> CDF<T> {
-    pub fn get_value(&self, p: f32) -> Result<T, Error> {
+    pub fn get_cdf(&self, p: f32) -> Result<T, Error> {
         if p < 0.0 || 1.0 < p {
             return Err(Error::make_error_syntax(ErrorCode::InvalidArgumentInput));
         }
@@ -66,30 +98,30 @@ impl<T: Copy> CDF<T> {
 
 impl<I, T> From<I> for CDF<T>
 where
-    I: IntoIterator<Item = (f32, T)> + Clone,
+    I: IntoIterator<Item = (T, f32)> + Clone,
     T: Copy,
 {
     fn from(s: I) -> Self {
         let mut items: Vec<CDFItem<T>> = vec![];
-        let normalize_factor: f32 = s.clone().into_iter().map(|(k, _)| k).sum();
+        let normalize_factor: f32 = s.clone().into_iter().map(|(_, p)| p).sum();
         let mut temp = 0f32;
 
-        for (k, v) in s.into_iter() {
+        for (k, p) in s.into_iter() {
             items.push(CDFItem {
                 start: Bound::Included(temp),
-                end: Bound::Excluded(temp + k / normalize_factor),
-                value: v,
+                end: Bound::Excluded(temp + p / normalize_factor),
+                value: k,
             });
-            temp = temp + k / normalize_factor;
+            temp = temp + p / normalize_factor;
         }
 
         let last_idx = items.len() - 1;
         if let CDFItem {
-            end: Bound::Excluded(v),
+            end: Bound::Excluded(p),
             ..
         } = items[last_idx]
         {
-            items[last_idx].end = Bound::Included(v);
+            items[last_idx].end = Bound::Included(p);
         }
 
         Self(items)
@@ -99,6 +131,57 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_get_pdf() {
+        let mut map: HashMap<usize, f32> = HashMap::new();
+        map.insert(1, 0.3);
+        map.insert(2, 0.4);
+        map.insert(3, 0.3);
+
+        let pdf = PDF::new(map);
+        assert_eq!(pdf.get_pdf(&1), Some(&0.3));
+        assert_eq!(pdf.get_pdf(&2), Some(&0.4));
+        assert_eq!(pdf.get_pdf(&3), Some(&0.3));
+        assert_eq!(pdf.get_pdf(&4), None);
+    }
+
+    #[test]
+    fn test_index() {
+        let mut map: HashMap<usize, f32> = HashMap::new();
+        map.insert(1, 0.3);
+        map.insert(2, 0.4);
+        map.insert(3, 0.3);
+
+        let pdf = PDF::new(map);
+        assert_eq!(pdf[1], 0.3);
+        assert_eq!(pdf[2], 0.4);
+        assert_eq!(pdf[3], 0.3);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_index2() {
+        let mut map: HashMap<usize, f32> = HashMap::new();
+        map.insert(1, 0.3);
+        map.insert(2, 0.4);
+        map.insert(3, 0.3);
+
+        let pdf = PDF::new(map);
+        let _x = pdf[4];
+    }
+
+    #[test]
+    fn test_intoiter() {
+        let mut map: HashMap<usize, f32> = HashMap::new();
+        map.insert(1, 0.3);
+        map.insert(2, 0.4);
+        map.insert(3, 0.3);
+
+        let mut vec: Vec<(usize, f32)> = PDF::new(map).into_iter().collect();
+        vec.sort_by_key(|v| v.0);
+        assert_eq!(vec, vec![(1, 0.3), (2, 0.4), (3, 0.3)]);
+    }
 
     #[test]
     fn test_dist_item_order() {
@@ -116,7 +199,7 @@ mod test {
     }
 
     #[test]
-    fn test_get_value() {
+    fn test_get_cdf() {
         let cdf = CDF::<usize>(vec![
             CDFItem {
                 start: Bound::Included(1.0),
@@ -135,25 +218,25 @@ mod test {
             },
         ]);
 
-        assert_eq!(cdf.get_value(1.0), Ok(3));
-        assert_eq!(cdf.get_value(1.5), Ok(3));
-        assert_eq!(cdf.get_value(2.0), Ok(4));
-        assert_eq!(cdf.get_value(4.0), Ok(5));
-        assert_eq!(cdf.get_value(5.0), Ok(5));
+        assert_eq!(cdf.get_cdf(1.0), Ok(3));
+        assert_eq!(cdf.get_cdf(1.5), Ok(3));
+        assert_eq!(cdf.get_cdf(2.0), Ok(4));
+        assert_eq!(cdf.get_cdf(4.0), Ok(5));
+        assert_eq!(cdf.get_cdf(5.0), Ok(5));
     }
 
     #[test]
     fn test_from() {
-        let items = [(1.0, 2), (2.0, 3), (3.0, 4), (4.0, 5)];
+        let items = [(2, 1.0), (3, 2.0), (4, 3.0), (5, 4.0)];
         let cdf: CDF<usize> = items.into();
 
-        assert_eq!(cdf.get_value(0.0), Ok(2));
-        assert_eq!(cdf.get_value(0.1), Ok(3));
-        assert_eq!(cdf.get_value(0.2), Ok(3));
-        assert_eq!(cdf.get_value(0.3), Ok(4));
-        assert_eq!(cdf.get_value(0.5), Ok(4));
-        assert_eq!(cdf.get_value(0.6), Ok(5));
-        assert_eq!(cdf.get_value(0.7), Ok(5));
-        assert_eq!(cdf.get_value(1.0), Ok(5));
+        assert_eq!(cdf.get_cdf(0.0), Ok(2));
+        assert_eq!(cdf.get_cdf(0.1), Ok(3));
+        assert_eq!(cdf.get_cdf(0.2), Ok(3));
+        assert_eq!(cdf.get_cdf(0.3), Ok(4));
+        assert_eq!(cdf.get_cdf(0.5), Ok(4));
+        assert_eq!(cdf.get_cdf(0.6), Ok(5));
+        assert_eq!(cdf.get_cdf(0.7), Ok(5));
+        assert_eq!(cdf.get_cdf(1.0), Ok(5));
     }
 }
