@@ -1,7 +1,8 @@
+/// Define general CDF and conversion from iterator
+use rand::{distributions::Distribution, Rng};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::convert::From;
-/// Define general CDF and conversion from iterator
 use std::hash::Hash;
 use std::ops::{Bound, Index};
 
@@ -94,7 +95,7 @@ impl<T: Copy> CDFItem<T> {
 pub struct CDF<T: Copy>(Vec<CDFItem<T>>);
 
 impl<T: Copy> CDF<T> {
-    pub fn get_cdf(&self, p: f32) -> Option<T> {
+    pub fn get_value(&self, p: f32) -> Option<T> {
         if p < 0.0 || 1.0 < p {
             return None;
         }
@@ -140,10 +141,21 @@ where
     }
 }
 
+impl<T> Distribution<T> for CDF<T>
+where
+    T: Copy,
+{
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> T {
+        let p: f32 = rng.gen();
+        return self.get_value(p).unwrap();
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
     use approx::assert_abs_diff_eq;
+    use std::collections::BTreeMap;
 
     #[test]
     fn test_get_pdf() {
@@ -255,11 +267,11 @@ mod test {
             },
         ]);
 
-        assert_eq!(cdf.get_cdf(1.0), Some(3));
-        assert_eq!(cdf.get_cdf(1.5), Some(3));
-        assert_eq!(cdf.get_cdf(2.0), Some(4));
-        assert_eq!(cdf.get_cdf(4.0), Some(5));
-        assert_eq!(cdf.get_cdf(5.0), Some(5));
+        assert_eq!(cdf.get_value(1.0), Some(3));
+        assert_eq!(cdf.get_value(1.5), Some(3));
+        assert_eq!(cdf.get_value(2.0), Some(4));
+        assert_eq!(cdf.get_value(4.0), Some(5));
+        assert_eq!(cdf.get_value(5.0), Some(5));
     }
 
     #[test]
@@ -267,13 +279,39 @@ mod test {
         let items = [(2, 1.0), (3, 2.0), (4, 3.0), (5, 4.0)];
         let cdf: CDF<usize> = items.into();
 
-        assert_eq!(cdf.get_cdf(0.0), Some(2));
-        assert_eq!(cdf.get_cdf(0.1), Some(3));
-        assert_eq!(cdf.get_cdf(0.2), Some(3));
-        assert_eq!(cdf.get_cdf(0.3), Some(4));
-        assert_eq!(cdf.get_cdf(0.5), Some(4));
-        assert_eq!(cdf.get_cdf(0.6), Some(5));
-        assert_eq!(cdf.get_cdf(0.7), Some(5));
-        assert_eq!(cdf.get_cdf(1.0), Some(5));
+        assert_eq!(cdf.get_value(0.0), Some(2));
+        assert_eq!(cdf.get_value(0.1), Some(3));
+        assert_eq!(cdf.get_value(0.2), Some(3));
+        assert_eq!(cdf.get_value(0.3), Some(4));
+        assert_eq!(cdf.get_value(0.5), Some(4));
+        assert_eq!(cdf.get_value(0.6), Some(5));
+        assert_eq!(cdf.get_value(0.7), Some(5));
+        assert_eq!(cdf.get_value(1.0), Some(5));
+    }
+
+    #[test]
+    fn test_sample() {
+        const INC: u128 = 0xa02bdbf7bb3c0a7ac28fa16a64abf96;
+        const SEED: u128 = 1234567890;
+        let mut pcg = rand_pcg::Pcg64::new(SEED, INC);
+
+        let items = [(2, 1.0), (3, 2.0), (4, 3.0), (5, 4.0)];
+        let cdf: CDF<usize> = items.into();
+
+        let mut count: BTreeMap<usize, usize> = BTreeMap::new();
+        count.insert(2, 0);
+        count.insert(3, 0);
+        count.insert(4, 0);
+        count.insert(5, 0);
+
+        for _i in 0..10000 {
+            let n = cdf.sample(&mut pcg);
+            *count.get_mut(&n).unwrap() += 1;
+        }
+
+        assert_eq!(*count.get_mut(&2).unwrap(), 990);
+        assert_eq!(*count.get_mut(&3).unwrap(), 2045);
+        assert_eq!(*count.get_mut(&4).unwrap(), 3029);
+        assert_eq!(*count.get_mut(&5).unwrap(), 3936);
     }
 }
