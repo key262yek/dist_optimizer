@@ -5,13 +5,13 @@ use std::convert::From;
 use std::ops::Bound;
 
 #[derive(Debug, Clone, Copy)]
-struct DistItem<T: Copy> {
+struct CDFItem<T: Copy> {
     start: Bound<f32>,
     end: Bound<f32>,
     value: T,
 }
 
-impl<T: Copy> DistItem<T> {
+impl<T: Copy> CDFItem<T> {
     fn cmp(&self, p: f32) -> Ordering {
         // Return whether the range is greater than p, is less than p or contains p
         match self.start {
@@ -47,7 +47,7 @@ impl<T: Copy> DistItem<T> {
 }
 
 #[derive(Clone, Debug)]
-pub struct CDF<T: Copy>(Vec<DistItem<T>>);
+pub struct CDF<T: Copy>(Vec<CDFItem<T>>);
 
 impl<T: Copy> CDF<T> {
     pub fn get_value(&self, p: f32) -> Result<T, Error> {
@@ -70,12 +70,12 @@ where
     T: Copy,
 {
     fn from(s: I) -> Self {
-        let mut items: Vec<DistItem<T>> = vec![];
+        let mut items: Vec<CDFItem<T>> = vec![];
         let normalize_factor: f32 = s.clone().into_iter().map(|(k, _)| k).sum();
         let mut temp = 0f32;
 
         for (k, v) in s.into_iter() {
-            items.push(DistItem {
+            items.push(CDFItem {
                 start: Bound::Included(temp),
                 end: Bound::Excluded(temp + k / normalize_factor),
                 value: v,
@@ -84,7 +84,7 @@ where
         }
 
         let last_idx = items.len() - 1;
-        if let DistItem {
+        if let CDFItem {
             end: Bound::Excluded(v),
             ..
         } = items[last_idx]
@@ -102,7 +102,7 @@ mod test {
 
     #[test]
     fn test_dist_item_order() {
-        let item = DistItem::<f32> {
+        let item = CDFItem::<f32> {
             start: Bound::Included(1.0),
             end: Bound::Excluded(2.0),
             value: 3.0,
@@ -118,17 +118,17 @@ mod test {
     #[test]
     fn test_get_value() {
         let cdf = CDF::<usize>(vec![
-            DistItem {
+            CDFItem {
                 start: Bound::Included(1.0),
                 end: Bound::Excluded(2.0),
                 value: 3,
             },
-            DistItem {
+            CDFItem {
                 start: Bound::Included(2.0),
                 end: Bound::Excluded(3.0),
                 value: 4,
             },
-            DistItem {
+            CDFItem {
                 start: Bound::Included(3.0),
                 end: Bound::Included(5.0),
                 value: 5,
