@@ -3,5 +3,5 @@
 // we can use this library.
 
 pub mod distribution;
-// pub mod gradient;
 pub mod error;
+pub mod gradient;
