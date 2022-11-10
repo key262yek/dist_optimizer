@@ -30,15 +30,15 @@ impl<T: Eq + Hash + Copy> PDF<T> {
         }
     }
 
-    pub fn gradient(&mut self, f: &dyn Fn(&Self) -> f32) -> Result<HashMap<T, f32>, Error> {
-        const h: f32 = 1e-4;
-        let mut grad: HashMap<T, f32> = HashMap::new();
-        for &key in self.map.keys() {
-            let slope = self.single_slope(key, h, f)?;
-            grad.insert(key, slope);
-        }
-        return Ok(grad);
-    }
+    // pub fn gradient(&mut self, f: &dyn Fn(&Self) -> f32) -> Result<HashMap<T, f32>, Error> {
+    //     const h: f32 = 1e-4;
+    //     let mut grad: HashMap<T, f32> = HashMap::new();
+    //     for &key in self.map.keys() {
+    //             let slope = self.single_slope(key, h, f)?;
+    //             grad.insert(key, slope);
+    //     }    
+    //     return Ok(grad);
+    // }
 }
 
 #[cfg(test)]
