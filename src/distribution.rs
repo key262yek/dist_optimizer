@@ -1,3 +1,4 @@
+use approx::AbsDiffEq;
 /// Define general CDF and conversion from iterator
 use rand::{distributions::Distribution, Rng};
 use std::cmp::Ordering;
@@ -7,15 +8,40 @@ use std::hash::Hash;
 use std::ops::{Bound, Index};
 
 #[derive(Debug, Clone)]
-pub struct PDF<T: Eq + Hash>(HashMap<T, f32>);
+pub struct PDF<T: Eq + Hash> {
+    pub(crate) map: HashMap<T, f32>,
+    constrained_item: T,
+}
 
-impl<T: Eq + Hash> PDF<T> {
-    pub fn new(map: HashMap<T, f32>) -> Self {
-        Self(map)
+impl<T: Eq + Hash + Copy> PDF<T> {
+    pub fn new(map: HashMap<T, f32>, constrained_item: T) -> Self {
+        let sum: f32 = map.values().sum();
+        if sum.abs_diff_ne(&1.0, 1e-10) {
+            panic!("PDF is not normalized. sum : {:?}", sum);
+        }
+        Self {
+            map,
+            constrained_item,
+        }
     }
 
-    pub fn get_pdf(&self, k: &T) -> Option<&f32> {
-        self.0.get(k)
+    pub fn get_pdf(&self, k: T) -> Option<&f32> {
+        self.map.get(&k)
+    }
+
+    pub fn modify_pdf(&mut self, k: T, v: f32) {
+        let dv = v - self[k];
+
+        if self[self.constrained_item] < dv {
+            panic!("Increase of probability is too big to normalize");
+        }
+
+        *self.map.get_mut(&k).unwrap() += dv;
+        *self.map.get_mut(&self.constrained_item).unwrap() -= dv;
+    }
+
+    pub fn constrained_value(&self) -> f32 {
+        return self[self.constrained_item];
     }
 }
 
@@ -23,7 +49,23 @@ impl<T: Eq + Hash + Copy> Index<T> for PDF<T> {
     type Output = f32;
 
     fn index(&self, k: T) -> &f32 {
-        &self.0[&k]
+        &self.map[&k]
+    }
+}
+
+impl<'a, T: Eq + Hash + Copy> Index<T> for &'a PDF<T> {
+    type Output = f32;
+
+    fn index(&self, k: T) -> &f32 {
+        &self.map[&k]
+    }
+}
+
+impl<'a, T: Eq + Hash + Copy> Index<T> for &'a mut PDF<T> {
+    type Output = f32;
+
+    fn index(&self, k: T) -> &f32 {
+        &self.map[&k]
     }
 }
 
@@ -32,7 +74,7 @@ impl<T: Eq + Hash> IntoIterator for PDF<T> {
     type IntoIter = std::collections::hash_map::IntoIter<T, f32>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
+        self.map.into_iter()
     }
 }
 
@@ -164,11 +206,11 @@ mod test {
         map.insert(2, 0.4);
         map.insert(3, 0.3);
 
-        let pdf = PDF::new(map);
-        assert_eq!(pdf.get_pdf(&1), Some(&0.3));
-        assert_eq!(pdf.get_pdf(&2), Some(&0.4));
-        assert_eq!(pdf.get_pdf(&3), Some(&0.3));
-        assert_eq!(pdf.get_pdf(&4), None);
+        let pdf = PDF::new(map, 1);
+        assert_abs_diff_eq!(pdf.get_pdf(1).unwrap(), &0.3, epsilon = 1e-5);
+        assert_abs_diff_eq!(pdf.get_pdf(2).unwrap(), &0.4, epsilon = 1e-5);
+        assert_abs_diff_eq!(pdf.get_pdf(3).unwrap(), &0.3, epsilon = 1e-5);
+        assert_eq!(pdf.get_pdf(4), None);
     }
 
     #[test]
@@ -178,10 +220,10 @@ mod test {
         map.insert(2, 0.4);
         map.insert(3, 0.3);
 
-        let pdf = PDF::new(map);
-        assert_eq!(pdf[1], 0.3);
-        assert_eq!(pdf[2], 0.4);
-        assert_eq!(pdf[3], 0.3);
+        let pdf = PDF::new(map, 1);
+        assert_abs_diff_eq!(pdf[1], 0.3, epsilon = 1e-5);
+        assert_abs_diff_eq!(pdf[2], 0.4, epsilon = 1e-5);
+        assert_abs_diff_eq!(pdf[3], 0.3, epsilon = 1e-5);
     }
 
     #[test]
@@ -192,8 +234,37 @@ mod test {
         map.insert(2, 0.4);
         map.insert(3, 0.3);
 
-        let pdf = PDF::new(map);
+        let pdf = PDF::new(map, 1);
         let _x = pdf[4];
+    }
+
+    #[test]
+    fn test_modify_pdf() {
+        let mut map: HashMap<usize, f32> = HashMap::new();
+        map.insert(1, 0.3);
+        map.insert(2, 0.4);
+        map.insert(3, 0.3);
+
+        let mut pdf = PDF::new(map, 1);
+        pdf.modify_pdf(2, 0.5);
+        assert_abs_diff_eq!(pdf[1], 0.2, epsilon = 1e-5);
+        assert_abs_diff_eq!(pdf[2], 0.5, epsilon = 1e-5);
+
+        pdf.modify_pdf(3, 0.2);
+        assert_abs_diff_eq!(pdf[1], 0.3, epsilon = 1e-5);
+        assert_abs_diff_eq!(pdf[3], 0.2, epsilon = 1e-5);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_modify_pdf2() {
+        let mut map: HashMap<usize, f32> = HashMap::new();
+        map.insert(1, 0.3);
+        map.insert(2, 0.4);
+        map.insert(3, 0.3);
+
+        let mut pdf = PDF::new(map, 1);
+        pdf.modify_pdf(2, 0.8);
     }
 
     #[test]
@@ -203,7 +274,7 @@ mod test {
         map.insert(2, 0.4);
         map.insert(3, 0.3);
 
-        let mut vec: Vec<(usize, f32)> = PDF::new(map).into_iter().collect();
+        let mut vec: Vec<(usize, f32)> = PDF::new(map, 1).into_iter().collect();
         vec.sort_by_key(|v| v.0);
         assert_eq!(vec, vec![(1, 0.3), (2, 0.4), (3, 0.3)]);
     }
@@ -215,7 +286,7 @@ mod test {
         map.insert(2, 0.4);
         map.insert(3, 0.3);
 
-        let pdf = PDF::new(map.clone());
+        let pdf = PDF::new(map.clone(), 1);
         let cdf: CDF<usize> = pdf.into();
         for item in cdf.0.iter() {
             assert_abs_diff_eq!(item.len(), map[&item.value]);
@@ -248,30 +319,36 @@ mod test {
     }
 
     #[test]
-    fn test_get_cdf() {
+    fn test_get_value() {
         let cdf = CDF::<usize>(vec![
             CDFItem {
-                start: Bound::Included(1.0),
-                end: Bound::Excluded(2.0),
+                start: Bound::Included(0.0),
+                end: Bound::Excluded(0.5),
                 value: 3,
             },
             CDFItem {
-                start: Bound::Included(2.0),
-                end: Bound::Excluded(3.0),
+                start: Bound::Included(0.5),
+                end: Bound::Excluded(0.7),
                 value: 4,
             },
             CDFItem {
-                start: Bound::Included(3.0),
-                end: Bound::Included(5.0),
+                start: Bound::Included(0.7),
+                end: Bound::Included(1.0),
                 value: 5,
             },
         ]);
 
-        assert_eq!(cdf.get_value(1.0), Some(3));
-        assert_eq!(cdf.get_value(1.5), Some(3));
-        assert_eq!(cdf.get_value(2.0), Some(4));
-        assert_eq!(cdf.get_value(4.0), Some(5));
-        assert_eq!(cdf.get_value(5.0), Some(5));
+        assert_eq!(cdf.get_value(0.0), Some(3));
+        assert_eq!(cdf.get_value(0.1), Some(3));
+        assert_eq!(cdf.get_value(0.2), Some(3));
+        assert_eq!(cdf.get_value(0.3), Some(3));
+        assert_eq!(cdf.get_value(0.4), Some(3));
+        assert_eq!(cdf.get_value(0.5), Some(4));
+        assert_eq!(cdf.get_value(0.6), Some(4));
+        assert_eq!(cdf.get_value(0.7), Some(5));
+        assert_eq!(cdf.get_value(0.8), Some(5));
+        assert_eq!(cdf.get_value(0.9), Some(5));
+        assert_eq!(cdf.get_value(1.0), Some(5));
     }
 
     #[test]
