@@ -48,7 +48,7 @@ mod test {
     use std::collections::HashMap;
 
     fn functional<T: Eq + Hash>(pdf: &PDF<T>) -> f32 {
-        return pdf.map.values().map(|s| s.powi(2)).sum();
+        return pdf.prob.map(|s| s.powi(2)).sum();
     }
 
     #[test]
