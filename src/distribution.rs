@@ -6,42 +6,61 @@ use std::collections::HashMap;
 use std::convert::From;
 use std::hash::Hash;
 use std::ops::{Bound, Index};
+use ndarray::Array1;
 
 #[derive(Debug, Clone)]
 pub struct PDF<T: Eq + Hash> {
-    pub(crate) map: HashMap<T, f32>,
-    constrained_item: T,
+    pub(crate) map: HashMap<T, usize>,
+    pub(crate) prob: Array1<f32>, 
+    constrained_item: (T, usize),
 }
 
 impl<T: Eq + Hash + Copy> PDF<T> {
-    pub fn new(map: HashMap<T, f32>, constrained_item: T) -> Self {
+    pub fn new(map: HashMap<T, f32>, constraint: T) -> Self {
         let sum: f32 = map.values().sum();
         if sum.abs_diff_ne(&1.0, 1e-10) {
             panic!("PDF is not normalized. sum : {:?}", sum);
         }
+
+        let mut new_map : HashMap<T, usize> = HashMap::new();
+        let mut prob: Vec<f32> = Vec::new();
+
+        let mut idx = 0usize;
+        for (&key, &value) in map.iter(){
+            new_map.insert(key, idx);
+            prob.push(value);
+            idx += 1;
+        }
+
+        let prob = Array1::from_iter(prob);
+        let constrained_idx = new_map[&constraint];
         Self {
-            map,
-            constrained_item,
+            map: new_map,
+            prob,
+            constrained_item: (constraint, constrained_idx),
         }
     }
 
-    pub fn get_pdf(&self, k: T) -> Option<&f32> {
-        self.map.get(&k)
+    pub fn get_pdf(&self, k: T) -> Option<f32> {
+        let idx = self.map.get(&k);
+        idx.map(|&x| self.prob[x])
     }
 
     pub fn modify_pdf(&mut self, k: T, v: f32) {
-        let dv = v - self[k];
+        let idx = *self.map.get(&k).unwrap();
+        let constrained_idx = self.constrained_item.1;
+        let dv = v - self.prob[idx];
 
-        if self[self.constrained_item] < dv {
+        if self.prob[constrained_idx] < dv {
             panic!("Increase of probability is too big to normalize");
         }
 
-        *self.map.get_mut(&k).unwrap() += dv;
-        *self.map.get_mut(&self.constrained_item).unwrap() -= dv;
+        self.prob[idx] += dv;
+        self.prob[constrained_idx] -= dv;
     }
 
     pub fn constrained_value(&self) -> f32 {
-        return self[self.constrained_item];
+        return self.prob[self.constrained_item.1];
     }
 }
 
@@ -49,7 +68,7 @@ impl<T: Eq + Hash + Copy> Index<T> for PDF<T> {
     type Output = f32;
 
     fn index(&self, k: T) -> &f32 {
-        &self.map[&k]
+        &self.prob[self.map[&k]]
     }
 }
 
@@ -57,7 +76,7 @@ impl<'a, T: Eq + Hash + Copy> Index<T> for &'a PDF<T> {
     type Output = f32;
 
     fn index(&self, k: T) -> &f32 {
-        &self.map[&k]
+        &self.prob[self.map[&k]]
     }
 }
 
@@ -65,16 +84,32 @@ impl<'a, T: Eq + Hash + Copy> Index<T> for &'a mut PDF<T> {
     type Output = f32;
 
     fn index(&self, k: T) -> &f32 {
-        &self.map[&k]
+        &self.prob[self.map[&k]]
+    }
+}
+
+pub struct PDFIter<T: Eq + Hash>{
+    items: std::collections::hash_map::IntoIter<T, usize>,
+    prob: Array1<f32>,
+}
+
+impl<T: Eq + Hash> std::iter::Iterator for PDFIter<T>{
+    type Item = (T, f32);
+
+    fn next(&mut self) -> Option<Self::Item>{
+        self.items.next().map(|(x, idx)| (x, self.prob[idx]))
     }
 }
 
 impl<T: Eq + Hash> IntoIterator for PDF<T> {
     type Item = (T, f32);
-    type IntoIter = std::collections::hash_map::IntoIter<T, f32>;
+    type IntoIter = PDFIter<T>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.map.into_iter()
+        PDFIter{
+            items: self.map.into_iter(),
+            prob: self.prob,
+        }
     }
 }
 
